@@ -2,10 +2,18 @@ from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import requests
 import os
+import re
 
 app = Flask(__name__)
 
-openai_api_key = os.environ.get('OPENAI_API_KEY', '').strip()
+# Clean API key from any whitespace or newlines
+def clean_api_key(key):
+    if key:
+        # Remove all whitespace, newlines, tabs
+        return re.sub(r'\s+', '', key)
+    return ''
+
+openai_api_key = clean_api_key(os.environ.get('OPENAI_API_KEY', ''))
 twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
 twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
 from_number = os.environ.get('TWILIO_WHATSAPP_NUMBER')
@@ -57,3 +65,4 @@ def home():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
