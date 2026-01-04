@@ -48,12 +48,29 @@ def webhook():
                     'temperature': 0.7,
                     'maxOutputTokens': 500
                 }
-            }
+            },
+            timeout=10
          )
         
         result = response.json()
-        bot_reply = result['candidates'][0]['content']['parts'][0]['text']
         
+        # معالجة أفضل للرد
+        if 'candidates' in result and len(result['candidates']) > 0:
+            candidate = result['candidates'][0]
+            if 'content' in candidate and 'parts' in candidate['content']:
+                bot_reply = candidate['content']['parts'][0]['text']
+            else:
+                bot_reply = f"عذراً، لم أتمكن من الرد. السبب: {candidate.get('finishReason', 'غير معروف')}"
+        elif 'error' in result:
+            error_msg = result['error'].get('message', 'خطأ غير معروف')
+            bot_reply = f"عذراً، حدث خطأ من Gemini: {error_msg}"
+        else:
+            bot_reply = f"عذراً، رد غير متوقع من Gemini. التفاصيل: {str(result)[:200]}"
+        
+    except requests.exceptions.Timeout:
+        bot_reply = "عذراً، انتهت مهلة الاتصال بـ Gemini. حاول مرة أخرى."
+    except requests.exceptions.RequestException as e:
+        bot_reply = f"عذراً، خطأ في الاتصال: {str(e)}"
     except Exception as e:
         bot_reply = f"عذراً، حدث خطأ: {str(e)}"
     
