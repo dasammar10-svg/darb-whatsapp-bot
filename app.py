@@ -1,78 +1,61 @@
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-import requests
+from huggingface_hub import InferenceClient
 import os
-import re
 
 app = Flask(__name__)
 
-# Clean API key from any whitespace or newlines
-def clean_api_key(key):
-    if key:
-        return re.sub(r'\s+', '', key)
-    return ''
-
-gemini_api_key = clean_api_key(os.environ.get('GEMINI_API_KEY', ''))
-twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
-from_number = os.environ.get('TWILIO_WHATSAPP_NUMBER')
+# Hugging Face API
+hf_token = os.environ.get('HUGGINGFACE_API_KEY', '')
+client = InferenceClient(token=hf_token)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     incoming_msg = request.values.get('Body', '').strip()
     from_number_user = request.values.get('From', '')
     
-    prompt = f"""أنت مساعد ذكي لشركة درب للاستثمار السياحي. مهمتك مساعدة العملاء بالإجابة على أسئلتهم حول الخدمات التالية:
+    # رسالة النظام
+    system_message = """أنت مساعد ذكي لشركة درب للاستثمار السياحي في ليبيا.
+مهمتك مساعدة العملاء بالإجابة على أسئلتهم حول:
+- استخراج تأشيرات شنغن
+- حجوزات الطيران والفنادق
+- برامج سياحية مخصصة
+- استشارات سفر
 
-1. استخراج تأشيرات شنغن
-2. حجوزات الطيران والفنادق
-3. برامج سياحية مخصصة
-4. استشارات سفر
+أجب بشكل احترافي ومفيد باللغة العربية. اجعل ردودك قصيرة ومباشرة."""
 
-السؤال: {incoming_msg}
-
-الرجاء الإجابة بشكل احترافي ومفيد باللغة العربية."""
+    prompt = f"{system_message}\n\nالعميل: {incoming_msg}\n\nالمساعد:"
     
     try:
-        # Gemini API endpoint
-        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_api_key}'
+        # استخدام Hugging Face Inference API
+        # نستخدم نموذج Meta Llama 3 (يدعم العربية بشكل ممتاز)
+        response = client.text_generation(
+            prompt,
+            model="meta-llama/Meta-Llama-3-8B-Instruct",
+            max_new_tokens=300,
+            temperature=0.7,
+            top_p=0.9,
+            repetition_penalty=1.1
+        )
         
-        response = requests.post(
-            url,
-            headers={'Content-Type': 'application/json'},
-            json={
-                'contents': [{
-                    'parts': [{'text': prompt}]
-                }],
-                'generationConfig': {
-                    'temperature': 0.7,
-                    'maxOutputTokens': 500
-                }
-            },
-            timeout=10
-         )
+        bot_reply = response.strip()
         
-        result = response.json()
+        # إذا كان الرد فارغاً
+        if not bot_reply:
+            bot_reply = "عذراً، لم أتمكن من الرد. يرجى إعادة المحاولة أو التواصل مع فريق الدعم."
         
-        # معالجة أفضل للرد
-        if 'candidates' in result and len(result['candidates']) > 0:
-            candidate = result['candidates'][0]
-            if 'content' in candidate and 'parts' in candidate['content']:
-                bot_reply = candidate['content']['parts'][0]['text']
-            else:
-                bot_reply = f"عذراً، لم أتمكن من الرد. السبب: {candidate.get('finishReason', 'غير معروف')}"
-        elif 'error' in result:
-            error_msg = result['error'].get('message', 'خطأ غير معروف')
-            bot_reply = f"عذراً، حدث خطأ من Gemini: {error_msg}"
-        else:
-            bot_reply = f"عذراً، رد غير متوقع من Gemini. التفاصيل: {str(result)[:200]}"
-        
-    except requests.exceptions.Timeout:
-        bot_reply = "عذراً، انتهت مهلة الاتصال بـ Gemini. حاول مرة أخرى."
-    except requests.exceptions.RequestException as e:
-        bot_reply = f"عذراً، خطأ في الاتصال: {str(e)}"
+        # تحديد طول الرد (WhatsApp يدعم حتى 1600 حرف)
+        if len(bot_reply) > 1500:
+            bot_reply = bot_reply[:1500] + "..."
+            
     except Exception as e:
-        bot_reply = f"عذراً، حدث خطأ: {str(e)}"
+        error_msg = str(e)
+        if "rate limit" in error_msg.lower():
+            bot_reply = "عذراً، النظام مشغول حالياً. يرجى المحاولة بعد قليل."
+        elif "timeout" in error_msg.lower():
+            bot_reply = "عذراً، انتهت مهلة الاتصال. يرجى المحاولة مرة أخرى."
+        else:
+            bot_reply = f"عذراً، حدث خطأ. يرجى التواصل مع فريق الدعم."
     
     resp = MessagingResponse()
     resp.message(bot_reply)
